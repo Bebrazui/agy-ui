@@ -26,6 +26,17 @@ android {
         }
     }
 
+    signingConfigs {
+        // Постоянный ключ, чтобы обновления ставились поверх старой версии
+        // без удаления приложения (у CI свой debug-ключ каждый прогон).
+        create("stable") {
+            storeFile = file("agy-debug.jks")
+            storePassword = "agydebug"
+            keyAlias = "agy"
+            keyPassword = "agydebug"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -41,6 +52,12 @@ android {
 
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
+    }
+
+    buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("stable")
+        }
     }
 }
 
