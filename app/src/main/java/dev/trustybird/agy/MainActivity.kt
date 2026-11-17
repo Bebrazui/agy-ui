@@ -180,8 +180,11 @@ private fun LoginScreen(
     var installing by remember { mutableStateOf(false) }
     var apiKey by remember { mutableStateOf(Store.apiKey(ctx)) }
     var job by remember { mutableStateOf<Job?>(null) }
+    var session by remember { mutableStateOf<AgyLogin?>(null) }
+    var code by remember { mutableStateOf("") }
+    var needCode by remember { mutableStateOf(false) }
 
-    DisposableEffect(Unit) { onDispose { job?.cancel() } }
+    DisposableEffect(Unit) { onDispose { session?.cancel(); job?.cancel() } }
 
     fun openUrl(url: String) {
         runCatching {
@@ -192,18 +195,25 @@ private fun LoginScreen(
     fun login(useKey: Boolean) {
         if (busy) return
         busy = true
+        needCode = false
+        code = ""
         status = if (useKey) "Вхожу по ключу…" else "Запрашиваю ссылку…"
         Store.setApiKey(ctx, apiKey)
+
+        val s = AgyLogin(ctx, net, if (useKey) apiKey else "")
+        session = s
         job = scope.launch {
-            AgyLogin.start(ctx, net, if (useKey) apiKey else "").collect { ev ->
+            s.run().collect { ev ->
                 when (ev) {
                     is AgyLogin.Event.Url -> {
-                        status = "Открыл браузер — заверши вход"
+                        needCode = true
+                        status = "Войди в Google и вставь код сюда"
                         openUrl(ev.url)
                     }
                     is AgyLogin.Event.Status -> status = ev.text
                     is AgyLogin.Event.Done -> {
                         busy = false
+                        needCode = false
                         if (ev.ok) {
                             Store.setAuthMethod(ctx, if (useKey) "api-key" else "google")
                             onAuthed()
@@ -274,6 +284,30 @@ private fun LoginScreen(
                 onClick = { login(useKey = false) },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Войти через Google") }
+
+            if (needCode) {
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it },
+                    label = { Text("Код из браузера") },
+                    singleLine = false,
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    enabled = code.isNotBlank(),
+                    onClick = { session?.submit(code) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Отправить код") }
+                TextButton(onClick = { login(useKey = false) }) { Text("Новая ссылка") }
+                Text(
+                    "agy ждёт код 60 секунд. Не успел — нажми «Новая ссылка».",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
 
             Spacer(Modifier.height(20.dp))
             HorizontalDivider()

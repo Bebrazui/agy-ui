@@ -10,7 +10,8 @@ Android-обёртка над официальным Google Antigravity CLI (`ag
 - `AgyBinary` — скачивает официальный `android_arm64` бинарь по манифесту
   Google, проверяет sha512, кладёт в `files/bin/agy`. В APK бинарь не входит.
 - `AgyLogin` — вход силами приложения: запускает `agy` с пустым `HOME`,
-  ловит ссылку авторизации Google, отдаёт её в браузер.
+  показывает ссылку Google и отправляет вставленный код в stdin процесса
+  (redirect_uri у Google ведёт на веб-страницу, а не на localhost).
 - `AgyRunner` — headless-режим `agy -p … --output-format stream-json`,
   поток событий → UI.
 - `Store` — сессии и сообщения в песочнице приложения (`sessions.json`).
