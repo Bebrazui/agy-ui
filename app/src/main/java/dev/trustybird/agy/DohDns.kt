@@ -8,29 +8,50 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.net.InetAddress
+import java.net.UnknownHostException
 
 /**
- * DNS-резолвер через DoH (DNS over HTTPS) в формате JSON API.
- * Позволяет не зависеть от системного резолвера при скачивании и диагностике.
- * На сам процесс agy не влияет: он резолвит имена сам.
+ * DNS через DoH (DNS over HTTPS) со списком серверов и фейловером.
+ *
+ * Принимает и IP, и полный URL:
+ *   1.1.1.1
+ *   8.8.8.8
+ *   https://dns.google/dns-query
+ *
+ * Если первый сервер не ответил — пробуем следующий, и так по кругу списка.
  */
 class DohDns(
-    private val endpoint: String,
+    private val endpoints: List<String>,
     private val client: OkHttpClient,
 ) : Dns {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
+    constructor(server: String, client: OkHttpClient) : this(listOf(server), client)
+
     override fun lookup(hostname: String): List<InetAddress> {
+        var lastError: Exception? = null
+
+        for (endpoint in endpoints) {
+            try {
+                val result = query(endpoint, hostname)
+                if (result.isNotEmpty()) return result
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        throw UnknownHostException(hostname).also { it.initCause(lastError) }
+    }
+
+    private fun query(endpoint: String, hostname: String): List<InetAddress> {
         val sep = if ('?' in endpoint) '&' else '?'
-        val url = "$endpoint${sep}name=$hostname&type=A"
         val req = Request.Builder()
-            .url(url)
+            .url("$endpoint${sep}name=$hostname&type=A")
             .header("Accept", "application/dns-json")
             .build()
 
         client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) error("DoH HTTP ${resp.code}")
+            if (!resp.isSuccessful) error("DoH HTTP ${resp.code} @ $endpoint")
             val body = resp.body?.string() ?: error("DoH: пустой ответ")
             val answers = runCatching {
                 json.parseToJsonElement(body).jsonObject["Answer"]?.jsonArray
@@ -46,11 +67,11 @@ class DohDns(
     }
 
     companion object {
-        /** Из «1.1.1.1» делает «https://1.1.1.1/dns-query»; полный URL оставляет как есть. */
-        fun endpointOf(servers: List<String>): String? {
-            val first = servers.firstOrNull()?.trim().orEmpty()
-            if (first.isEmpty()) return null
-            return if (first.startsWith("http")) first else "https://$first/dns-query"
-        }
+        /** «1.1.1.1» → «https://1.1.1.1/dns-query»; полный URL оставляем как есть. */
+        fun endpointsOf(servers: List<String>): List<String> = servers
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { if (it.startsWith("http")) it else "https://$it/dns-query" }
+            .distinct()
     }
 }

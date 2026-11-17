@@ -142,18 +142,19 @@ fun SettingsDialog(
                     value = cfg.dns.joinToString(", "),
                     onValueChange = {
                         cfg = cfg.copy(
-                            dns = it.split(',', ' ').map(String::trim).filter(String::isNotEmpty),
+                            dns = it.split(',', ' ', '\n').map(String::trim).filter(String::isNotEmpty),
                         )
                     },
-                    label = { Text("DNS (DoH)") },
-                    placeholder = { Text("1.1.1.1 или https://…/dns-query") },
+                    label = { Text("DNS-серверы (DoH)") },
+                    placeholder = { Text("1.1.1.1, 8.8.8.8, https://dns.google/dns-query") },
                     supportingText = {
                         Text(
-                            "Резолвер для приложения: скачивание, диагностика. На процесс agy не влияет.",
+                            "Можно несколько: IP или ссылка. Если сервер не ответил — берётся следующий. " +
+                                "Работает для приложения; agy резолвит имена сам.",
                             style = MaterialTheme.typography.labelSmall,
                         )
                     },
-                    singleLine = true,
+                    maxLines = 3,
                 )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

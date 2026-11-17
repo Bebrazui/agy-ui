@@ -2,6 +2,7 @@ package dev.trustybird.agy
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -39,6 +40,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -48,6 +50,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -91,7 +94,13 @@ private val AgyColors = darkColorScheme(
 
 @Composable
 fun AgyTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = AgyColors, content = content)
+    val ctx = LocalContext.current
+    val scheme = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        dynamicDarkColorScheme(ctx)
+    } else {
+        AgyColors
+    }
+    MaterialTheme(colorScheme = scheme, content = content)
 }
 
 private sealed interface Screen {
@@ -178,6 +187,7 @@ private fun LoginScreen(
     var status by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var installing by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf<Float?>(null) }
     var apiKey by remember { mutableStateOf(Store.apiKey(ctx)) }
     var job by remember { mutableStateOf<Job?>(null) }
     var session by remember { mutableStateOf<AgyLogin?>(null) }
@@ -261,21 +271,37 @@ private fun LoginScreen(
                     enabled = !installing,
                     onClick = {
                         installing = true
+                        progress = null
                         status = "Скачиваю agy…"
                         scope.launch {
                             runCatching {
-                                withContext(Dispatchers.IO) { AgyBinary.install(ctx, net) { status = it } }
+                                withContext(Dispatchers.IO) {
+                                    AgyBinary.install(ctx, net) { msg, frac ->
+                                        status = msg
+                                        progress = frac
+                                    }
+                                }
                             }.onSuccess {
                                 onInstalled()
                                 status = "agy $it готов"
+                                progress = 1f
                             }.onFailure {
                                 status = "Ошибка загрузки: ${it.message}"
+                                progress = null
                             }
                             installing = false
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (installing) "Скачиваю…" else "Скачать agy") }
+                if (installing) {
+                    Spacer(Modifier.height(8.dp))
+                    if (progress == null) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                    } else {
+                        LinearProgressIndicator(progress = { progress!! }, modifier = Modifier.fillMaxWidth())
+                    }
+                }
                 Spacer(Modifier.height(12.dp))
             }
 
@@ -361,6 +387,7 @@ private fun ChatsScreen(
     var sessions by remember { mutableStateOf(Store.sessions(ctx)) }
     var status by remember { mutableStateOf<String?>(null) }
     var downloading by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf<Float?>(null) }
 
     Scaffold(
         topBar = {
@@ -397,18 +424,33 @@ private fun ChatsScreen(
                             enabled = !downloading,
                             onClick = {
                                 downloading = true
+                                progress = null
                                 status = "Скачиваю…"
                                 scope.launch {
                                     runCatching {
                                         withContext(Dispatchers.IO) {
-                                            AgyBinary.install(ctx, net) { status = it }
+                                            AgyBinary.install(ctx, net) { msg, frac ->
+                                                status = msg
+                                                progress = frac
+                                            }
                                         }
-                                    }.onSuccess { onInstalled(true) }
-                                        .onFailure { status = "Ошибка: ${it.message}" }
+                                    }.onSuccess { onInstalled(true); progress = 1f }
+                                        .onFailure { status = "Ошибка: ${it.message}"; progress = null }
                                     downloading = false
                                 }
                             },
                         ) { Text(if (downloading) "Скачиваю…" else "Установить") }
+                        if (downloading) {
+                            Spacer(Modifier.height(8.dp))
+                            if (progress == null) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                            } else {
+                                LinearProgressIndicator(
+                                    progress = { progress!! },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
                         status?.let {
                             Spacer(Modifier.height(6.dp))
                             Text(it, style = MaterialTheme.typography.labelSmall)
@@ -508,6 +550,7 @@ private fun ChatScreen(
     var input by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
+    var progress by remember { mutableStateOf<Float?>(null) }
     var mode by remember { mutableStateOf(AgentMode.AUTO) }
     val listState = rememberLazyListState()
     val runner = remember { AgyRunner(ctx) }
@@ -623,11 +666,22 @@ private fun ChatScreen(
                         TextButton(onClick = {
                             scope.launch {
                                 runCatching {
-                                    withContext(Dispatchers.IO) { AgyBinary.install(ctx, net) { status = it } }
-                                }.onSuccess { onInstalled(true) }
-                                    .onFailure { status = "Ошибка: ${it.message}" }
+                                    withContext(Dispatchers.IO) {
+                                        AgyBinary.install(ctx, net) { msg, frac ->
+                                            status = msg
+                                            progress = frac
+                                        }
+                                    }
+                                }.onSuccess { onInstalled(true); progress = 1f }
+                                    .onFailure { status = "Ошибка: ${it.message}"; progress = null }
                             }
                         }) { Text("Установить") }
+                    }
+                    progress?.let {
+                        LinearProgressIndicator(
+                            progress = { it },
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        )
                     }
                 }
             }

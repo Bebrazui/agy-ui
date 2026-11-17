@@ -29,22 +29,23 @@ object AgyBinary {
         File(binDir(ctx), "version").takeIf { it.isFile }?.readText()?.trim()
 
     /** Блокирующий вызов: запускать из Dispatchers.IO. */
-    fun install(ctx: Context, net: NetConfig, onProgress: (String) -> Unit): String {
+    fun install(ctx: Context, net: NetConfig, onProgress: (String, Float?) -> Unit): String {
         val dir = binDir(ctx).apply { mkdirs() }
-        onProgress("Читаю манифест…")
+        onProgress("Читаю манифест…", null)
         val client = Http.client(net)
         val m = json.decodeFromString<Manifest>(httpText(client, MANIFEST_URL))
 
         val tgz = File(dir, "agy.tar.gz")
-        onProgress("Скачиваю agy ${m.version}…")
+        onProgress("Скачиваю agy ${m.version}…", 0f)
         download(client, m.url, tgz) { read, total ->
-            if (total > 0) onProgress("agy ${m.version}: ${read * 100 / total}%")
+            val fraction = if (total > 0) (read.toFloat() / total).coerceIn(0f, 1f) else null
+            onProgress("agy ${m.version} · ${if (fraction != null) "${(fraction * 100).toInt()}%" else "${read / 1048576} МБ"}", fraction)
         }
 
-        onProgress("Проверяю sha512…")
+        onProgress("Проверяю sha512…", null)
         check(sha512(tgz) == m.sha512.lowercase()) { "sha512 не совпал — скачивание повреждено" }
 
-        onProgress("Распаковываю…")
+        onProgress("Распаковываю…", null)
         val staged = File(dir, "agy.staged")
         untarFirstFile(tgz, staged)
         staged.setExecutable(true)
@@ -55,7 +56,7 @@ object AgyBinary {
         binary(ctx).setExecutable(true)
         tgz.delete()
         File(dir, "version").writeText(m.version)
-        onProgress("Установлено: ${m.version}")
+        onProgress("Установлено: ${m.version}", 1f)
         return m.version
     }
 
