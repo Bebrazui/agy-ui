@@ -2,6 +2,7 @@ package dev.trustybird.agy
 
 import android.content.Context
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.UUID
@@ -59,7 +60,7 @@ object Store {
     }
 
     fun save(ctx: Context, list: List<Session>) {
-        runCatching { file(ctx).writeText(json.encodeToString(list)) }
+        runCatching { file(ctx).writeText(json.encodeToString<List<Session>>(list)) }
     }
 
     fun upsert(ctx: Context, session: Session) {
