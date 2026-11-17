@@ -5,6 +5,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+private val versionCodeValue: Int =
+    System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+
 android {
     namespace = "dev.trustybird.agy"
     compileSdk = 35
@@ -13,8 +16,8 @@ android {
         applicationId = "dev.trustybird.agy"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = versionCodeValue
+        versionName = "0.1.$versionCodeValue"
     }
 
     buildTypes {

@@ -213,25 +213,30 @@ private fun LoginScreen(
         val s = AgyLogin(ctx, net, if (useKey) apiKey else "")
         session = s
         job = scope.launch {
-            s.run().collect { ev ->
-                when (ev) {
-                    is AgyLogin.Event.Url -> {
-                        needCode = true
-                        status = "Войди в Google и вставь код сюда"
-                        openUrl(ev.url)
-                    }
-                    is AgyLogin.Event.Status -> status = ev.text
-                    is AgyLogin.Event.Done -> {
-                        busy = false
-                        needCode = false
-                        if (ev.ok) {
-                            Store.setAuthMethod(ctx, if (useKey) "api-key" else "google")
-                            onAuthed()
-                        } else {
-                            status = ev.detail
+            try {
+                s.run().collect { ev ->
+                    when (ev) {
+                        is AgyLogin.Event.Url -> {
+                            needCode = true
+                            status = "Войди в Google и вставь код сюда"
+                            openUrl(ev.url)
+                        }
+                        is AgyLogin.Event.Status -> status = ev.text
+                        is AgyLogin.Event.Done -> {
+                            busy = false
+                            needCode = false
+                            if (ev.ok) {
+                                Store.setAuthMethod(ctx, if (useKey) "api-key" else "google")
+                                onAuthed()
+                            } else {
+                                status = ev.detail
+                            }
                         }
                     }
                 }
+            } catch (e: Exception) {
+                busy = false
+                status = "Ошибка входа: ${e.javaClass.simpleName}: ${e.message}"
             }
         }
     }

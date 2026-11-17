@@ -85,6 +85,7 @@ fun SettingsDialog(
     var diag by remember { mutableStateOf<String?>(null) }
     var checking by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     val kinds = listOf(ProxyKind.DIRECT, ProxyKind.HTTP, ProxyKind.SOCKS5)
 
     AlertDialog(
@@ -169,6 +170,28 @@ fun SettingsDialog(
                             }
                         },
                     ) { Text("Проверить") }
+                    TextButton(onClick = {
+                        diag = "Читаю логи…"
+                        scope.launch {
+                            diag = withContext(Dispatchers.IO) {
+                                buildString {
+                                    appendLine("--- login.log ---")
+                                    appendLine(
+                                        runCatching {
+                                            java.io.File(ctx.filesDir, "login.log").readText()
+                                        }.getOrDefault("нет файла"),
+                                    )
+                                    appendLine()
+                                    appendLine("--- crash.txt ---")
+                                    append(
+                                        runCatching {
+                                            java.io.File(ctx.filesDir, "crash.txt").readText()
+                                        }.getOrDefault("падений не было"),
+                                    )
+                                }
+                            }
+                        }
+                    }) { Text("Логи") }
                     TextButton(onClick = { cfg = NetConfig() }) { Text("Сбросить") }
                 }
 

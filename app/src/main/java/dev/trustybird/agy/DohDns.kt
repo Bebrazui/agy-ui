@@ -23,6 +23,7 @@ import java.net.UnknownHostException
 class DohDns(
     private val endpoints: List<String>,
     private val client: OkHttpClient,
+    private val fallbackToSystem: Boolean = true,
 ) : Dns {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -39,6 +40,10 @@ class DohDns(
             } catch (e: Exception) {
                 lastError = e
             }
+        }
+        if (fallbackToSystem) {
+            // Лучше ответить системным резолвером, чем упасть целиком.
+            return Dns.SYSTEM.lookup(hostname)
         }
         throw UnknownHostException(hostname).also { it.initCause(lastError) }
     }
