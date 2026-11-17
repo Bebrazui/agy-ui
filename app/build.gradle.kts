@@ -15,7 +15,10 @@ android {
     defaultConfig {
         applicationId = "dev.trustybird.agy"
         minSdk = 26
-        targetSdk = 35
+        // 28, а не 35: начиная с Android 10 приложения с targetSdk 29+
+        // не могут запускать исполняемые файлы из своей папки данных
+        // (execve → EACCES). Termux по той же причине держит 28.
+        targetSdk = 28
         versionCode = versionCodeValue
         versionName = "0.1.$versionCodeValue"
     }
