@@ -147,12 +147,13 @@ fun SettingsDialog(
                             dns = it.split(',', ' ', '\n').map(String::trim).filter(String::isNotEmpty),
                         )
                     },
-                    label = { Text("DNS-серверы (DoH)") },
-                    placeholder = { Text("1.1.1.1, 8.8.8.8, https://dns.google/dns-query") },
+                    label = { Text("DNS-серверы (DoT / DoH)") },
+                    placeholder = { Text("dns.dns-ai.ru, 1.1.1.1, https://dns.google/dns-query") },
                     supportingText = {
                         Text(
-                            "Можно несколько: IP или ссылка. Если сервер не ответил — берётся следующий. " +
-                                "Работает для приложения; agy резолвит имена сам.",
+                            "Обычное имя или IP — сначала DoT (853), потом DoH. " +
+                                "tls:// — только DoT, https:// — только DoH. " +
+                                "Если сервер не ответил — берётся следующий.",
                             style = MaterialTheme.typography.labelSmall,
                         )
                     },

@@ -40,9 +40,9 @@ object Http {
         val proxyConfigured = builder.build()
         if (net.dns.isEmpty()) return proxyConfigured
 
-        val endpoints = DohDns.endpointsOf(net.dns)
-        if (endpoints.isEmpty()) return proxyConfigured
-        return proxyConfigured.newBuilder().dns(DohDns(endpoints, proxyConfigured)).build()
+        val resolvers = FallbackDns.fromConfig(net.dns, proxyConfigured)
+        if (resolvers.isEmpty()) return proxyConfigured
+        return proxyConfigured.newBuilder().dns(FallbackDns(resolvers)).build()
     }
 
     /** Одноразовая проверка доступности эндпоинта. */

@@ -20,13 +20,14 @@ object NetDiag {
     fun run(net: NetConfig): String {
         val plain = Http.client(net.copy(dns = emptyList()))
 
-        val dnsLines = net.dns.map { server ->
-            val endpoint = DohDns.endpointsOf(listOf(server)).firstOrNull() ?: server
-            runCatching {
-                val found = DohDns(listOf(endpoint), plain, fallbackToSystem = false).lookup(TEST_HOST)
-                "✓ $server — отвечает (${found.size} адр.)"
-            }.getOrElse {
-                "✗ $server — ${it.javaClass.simpleName}: ${it.message?.take(80)}"
+        val dnsLines = net.dns.flatMap { server ->
+            FallbackDns.fromConfig(listOf(server), plain).map { (label, resolver) ->
+                runCatching {
+                    val found = resolver.lookup(TEST_HOST)
+                    "✓ $label — отвечает (${found.size} адр.)"
+                }.getOrElse {
+                    "✗ $label — ${it.javaClass.simpleName}: ${it.message?.take(60)}"
+                }
             }
         }
 
