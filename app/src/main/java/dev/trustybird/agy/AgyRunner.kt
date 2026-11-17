@@ -64,6 +64,7 @@ class AgyRunner(private val ctx: Context) {
         conversationId: String? = null,
         mode: AgentMode = AgentMode.AUTO,
         model: String? = null,
+        apiKey: String = "",
     ): Flow<AgyEvent> = flow {
         val bin = AgyBinary.binary(ctx)
         if (!bin.isFile) {
@@ -90,6 +91,7 @@ class AgyRunner(private val ctx: Context) {
                 put("TMPDIR", File(ctx.cacheDir, "tmp").apply { mkdirs() }.absolutePath)
                 put("TERM", "dumb")
                 put("NO_COLOR", "1")
+                if (apiKey.isNotBlank()) put("GEMINI_API_KEY", apiKey)
             }
         }
 

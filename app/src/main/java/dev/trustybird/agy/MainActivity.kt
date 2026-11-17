@@ -1,19 +1,25 @@
 package dev.trustybird.agy
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,25 +28,28 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -51,18 +60,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { AgyTheme { AgyApp() } }
+        setContent { AgyTheme { AgyRoot() } }
     }
 }
 
@@ -79,73 +94,122 @@ fun AgyTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = AgyColors, content = content)
 }
 
-private enum class Kind { USER, AGENT, TOOL, ERROR, INFO }
-
-private data class ChatItem(val kind: Kind, val text: String, val extra: String = "")
+private sealed interface Screen {
+    data object Login : Screen
+    data object Chats : Screen
+    data class Chat(val id: String?) : Screen
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AgyApp() {
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-    val scope = rememberCoroutineScope()
+fun AgyRoot() {
+    val ctx = LocalContext.current
 
-    var installed by remember { mutableStateOf(AgyBinary.isInstalled(ctx)) }
-    var version by remember { mutableStateOf(AgyBinary.installedVersion(ctx)) }
-    var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf<String?>(version?.let { "agy $it" }) }
-    var showSettings by remember { mutableStateOf(false) }
     var net by remember { mutableStateOf(NetConfig.load(ctx)) }
-    var conversationId by remember { mutableStateOf<String?>(null) }
-    var mode by remember { mutableStateOf(AgentMode.AUTO) }
+    var authed by remember { mutableStateOf(Store.isAuthed(ctx)) }
+    var installed by remember { mutableStateOf(AgyBinary.isInstalled(ctx)) }
+    var showSettings by remember { mutableStateOf(false) }
+    var screen by remember { mutableStateOf<Screen>(if (authed) Screen.Chats else Screen.Login) }
 
-    val items = remember { mutableStateListOf<ChatItem>() }
-    val runner = remember { AgyRunner(ctx) }
-    var input by remember { mutableStateOf("") }
-    val listState = rememberLazyListState()
-    val cwd = remember { java.io.File(ctx.filesDir, "workspace").apply { mkdirs() }.absolutePath }
-
-    LaunchedEffect(items.size) {
-        if (items.isNotEmpty()) listState.animateScrollToItem(items.lastIndex)
+    if (showSettings) {
+        SettingsDialog(
+            initial = net,
+            onDismiss = { showSettings = false },
+            onSave = {
+                net = it
+                NetConfig.save(ctx, it)
+                showSettings = false
+            },
+        )
     }
 
-    fun append(kind: Kind, text: String, extra: String = "") {
-        if (kind == Kind.AGENT && items.lastOrNull()?.kind == Kind.AGENT) {
-            val last = items.removeAt(items.lastIndex)
-            items.add(last.copy(text = last.text + text))
-        } else {
-            items.add(ChatItem(kind, text, extra))
+    when (val s = screen) {
+        Screen.Login -> LoginScreen(
+            net = net,
+            installed = installed,
+            onInstalled = { installed = true },
+            onSettings = { showSettings = true },
+            onAuthed = {
+                authed = true
+                Store.setAuthed(ctx, true)
+                screen = Screen.Chats
+            },
+        )
+
+        Screen.Chats -> ChatsScreen(
+            net = net,
+            installed = installed,
+            onOpen = { screen = Screen.Chat(it) },
+            onNew = { screen = Screen.Chat(null) },
+            onSettings = { showSettings = true },
+            onInstalled = { installed = it },
+            onLogout = {
+                Store.setAuthed(ctx, false)
+                authed = false
+                screen = Screen.Login
+            },
+        )
+
+        is Screen.Chat -> ChatScreen(
+            sessionId = s.id,
+            net = net,
+            installed = installed,
+            onBack = { screen = Screen.Chats },
+            onInstalled = { installed = it },
+            onSettings = { showSettings = true },
+        )
+    }
+}
+
+/* ---------------------------------- Вход ---------------------------------- */
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LoginScreen(
+    net: NetConfig,
+    installed: Boolean,
+    onInstalled: () -> Unit,
+    onSettings: () -> Unit,
+    onAuthed: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var status by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var installing by remember { mutableStateOf(false) }
+    var apiKey by remember { mutableStateOf(Store.apiKey(ctx)) }
+    var job by remember { mutableStateOf<Job?>(null) }
+
+    DisposableEffect(Unit) { onDispose { job?.cancel() } }
+
+    fun openUrl(url: String) {
+        runCatching {
+            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
     }
 
-    fun send() {
-        val prompt = input.trim()
-        if (prompt.isEmpty() || busy) return
-        input = ""
-        items.add(ChatItem(Kind.USER, prompt))
+    fun login(useKey: Boolean) {
+        if (busy) return
         busy = true
-        scope.launch {
-            runner.stream(prompt, cwd, net, conversationId, mode).collect { ev ->
+        status = if (useKey) "Вхожу по ключу…" else "Запрашиваю ссылку…"
+        Store.setApiKey(ctx, apiKey)
+        job = scope.launch {
+            AgyLogin.start(ctx, net, if (useKey) apiKey else "").collect { ev ->
                 when (ev) {
-                    is AgyEvent.Ready -> {
-                        conversationId = ev.conversationId
-                        status = "инструментов: ${ev.tools}"
+                    is AgyLogin.Event.Url -> {
+                        status = "Открыл браузер — заверши вход"
+                        openUrl(ev.url)
                     }
-                    is AgyEvent.Text -> append(Kind.AGENT, ev.delta)
-                    is AgyEvent.Step -> append(Kind.TOOL, ev.type, "(${ev.state}) ${ev.detail}")
-                    is AgyEvent.Comment -> append(Kind.INFO, ev.text)
-                    is AgyEvent.Failed -> {
-                        append(Kind.ERROR, ev.message)
+                    is AgyLogin.Event.Status -> status = ev.text
+                    is AgyLogin.Event.Done -> {
                         busy = false
-                    }
-                    is AgyEvent.TurnDone -> {
-                        busy = false
-                        conversationId = ev.conversationId
-                        status = buildString {
-                            append(ev.status)
-                            append(" · ${ev.tokens} tok")
-                            if (ev.seconds > 0) append(" · ${"%.1f".format(ev.seconds)} с")
+                        if (ev.ok) {
+                            Store.setAuthMethod(ctx, if (useKey) "api-key" else "google")
+                            onAuthed()
+                        } else {
+                            status = ev.detail
                         }
-                        if (ev.status != "SUCCESS") append(Kind.ERROR, "status: ${ev.status}")
                     }
                 }
             }
@@ -156,40 +220,10 @@ fun AgyApp() {
         topBar = {
             TopAppBar(
                 modifier = Modifier.statusBarsPadding(),
-                title = {
-                    Column {
-                        Text("agy", style = MaterialTheme.typography.titleMedium)
-                        status?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
-                    }
-                },
+                title = { Text("agy") },
                 actions = {
-                    if (!installed) {
-                        TextButton(onClick = {
-                            busy = true
-                            status = "Установка…"
-                            scope.launch {
-                                runCatching {
-                                    withContext(Dispatchers.IO) {
-                                        AgyBinary.install(ctx, net) { status = it }
-                                    }
-                                }.onSuccess {
-                                    version = it
-                                    installed = true
-                                    status = "agy $it"
-                                }.onFailure {
-                                    status = "Ошибка: ${it.message}"
-                                }
-                                busy = false
-                            }
-                        }) { Text("Установить") }
-                    }
-                    IconButton(onClick = {
-                        conversationId = null
-                        items.clear()
-                        status = version?.let { "agy $it" }
-                    }) { Icon(Icons.Default.Add, contentDescription = "Новый чат") }
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Настройки")
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "Сеть")
                     }
                 },
             )
@@ -199,37 +233,390 @@ fun AgyApp() {
             modifier = Modifier
                 .padding(pad)
                 .fillMaxSize()
-                .imePadding(),
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Text("Antigravity", style = MaterialTheme.typography.headlineMedium)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Всё внутри приложения: бинарь, вход, чаты. Termux не нужен.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(28.dp))
+
+            if (!installed) {
+                OutlinedButton(
+                    enabled = !installing,
+                    onClick = {
+                        installing = true
+                        status = "Скачиваю agy…"
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) { AgyBinary.install(ctx, net) { status = it } }
+                            }.onSuccess {
+                                onInstalled()
+                                status = "agy $it готов"
+                            }.onFailure {
+                                status = "Ошибка загрузки: ${it.message}"
+                            }
+                            installing = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (installing) "Скачиваю…" else "Скачать agy") }
+                Spacer(Modifier.height(12.dp))
+            }
+
+            Button(
+                enabled = installed && !busy,
+                onClick = { login(useKey = false) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Войти через Google") }
+
+            Spacer(Modifier.height(20.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = { apiKey = it },
+                label = { Text("GEMINI_API_KEY") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            TextButton(
+                enabled = installed && !busy && apiKey.isNotBlank(),
+                onClick = { login(useKey = true) },
+            ) { Text("Войти по ключу") }
+
+            status?.let {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            if (busy) {
+                Spacer(Modifier.height(16.dp))
+                CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
+            }
+        }
+    }
+}
+
+/* ---------------------------------- Чаты ---------------------------------- */
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatsScreen(
+    net: NetConfig,
+    installed: Boolean,
+    onOpen: (String) -> Unit,
+    onNew: () -> Unit,
+    onSettings: () -> Unit,
+    onInstalled: (Boolean) -> Unit,
+    onLogout: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var sessions by remember { mutableStateOf(Store.sessions(ctx)) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var downloading by remember { mutableStateOf(false) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                modifier = Modifier.statusBarsPadding(),
+                title = { Text("Чаты") },
+                actions = {
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "Настройки")
+                    }
+                    IconButton(onClick = onLogout) {
+                        Icon(Icons.Default.Logout, contentDescription = "Выйти")
+                    }
+                },
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = onNew) {
+                Icon(Icons.Default.Add, contentDescription = "Новый чат")
+            }
+        },
+    ) { pad ->
+        Column(Modifier.padding(pad).fillMaxSize()) {
+            if (!installed) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("agy не установлен", style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.height(6.dp))
+                        Button(
+                            enabled = !downloading,
+                            onClick = {
+                                downloading = true
+                                status = "Скачиваю…"
+                                scope.launch {
+                                    runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            AgyBinary.install(ctx, net) { status = it }
+                                        }
+                                    }.onSuccess { onInstalled(true) }
+                                        .onFailure { status = "Ошибка: ${it.message}" }
+                                    downloading = false
+                                }
+                            },
+                        ) { Text(if (downloading) "Скачиваю…" else "Установить") }
+                        status?.let {
+                            Spacer(Modifier.height(6.dp))
+                            Text(it, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+
+            if (sessions.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Пока пусто", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Нажми +, чтобы начать",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(contentPadding = PaddingValues(bottom = 88.dp)) {
+                    items(sessions, key = { it.id }) { s ->
+                        SessionRow(
+                            session = s,
+                            onClick = { onOpen(s.id) },
+                            onDelete = {
+                                Store.delete(ctx, s.id)
+                                sessions = Store.sessions(ctx)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionRow(session: Session, onClick: () -> Unit, onDelete: () -> Unit) {
+    val fmt = remember { SimpleDateFormat("d MMM, HH:mm", Locale("ru")) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                session.title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                session.messages.lastOrNull()?.text?.take(70) ?: "пусто",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                fmt.format(Date(session.updated)),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        IconButton(onClick = onDelete) {
+            Icon(Icons.Default.Delete, contentDescription = "Удалить")
+        }
+    }
+}
+
+/* ---------------------------------- Чат ----------------------------------- */
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatScreen(
+    sessionId: String?,
+    net: NetConfig,
+    installed: Boolean,
+    onBack: () -> Unit,
+    onInstalled: (Boolean) -> Unit,
+    onSettings: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var session by remember {
+        mutableStateOf(sessionId?.let { Store.get(ctx, it) } ?: Session())
+    }
+    val messages = remember {
+        mutableStateListOf<Message>().also { list -> list.addAll(session.messages) }
+    }
+    var input by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var mode by remember { mutableStateOf(AgentMode.AUTO) }
+    val listState = rememberLazyListState()
+    val runner = remember { AgyRunner(ctx) }
+
+    DisposableEffect(Unit) { onDispose { runner.cancel() } }
+
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    }
+
+    fun persist() {
+        session = session.copy(
+            messages = messages.toList(),
+            updated = System.currentTimeMillis(),
+            title = if (session.title == "Новый чат" && messages.any { it.role == "user" }) {
+                Store.titleOf(messages.first { it.role == "user" }.text)
+            } else {
+                session.title
+            },
+        )
+        Store.upsert(ctx, session)
+    }
+
+    fun send() {
+        val prompt = input.trim()
+        if (prompt.isEmpty() || busy) return
+        input = ""
+        messages.add(Message("user", prompt))
+        persist()
+        busy = true
+        scope.launch {
+            runner.stream(
+                prompt = prompt,
+                cwd = java.io.File(ctx.filesDir, "workspace").apply { mkdirs() }.absolutePath,
+                net = net,
+                conversationId = session.conversationId,
+                mode = mode,
+                apiKey = Store.apiKey(ctx),
+            ).collect { ev ->
+                when (ev) {
+                    is AgyEvent.Ready -> status = "инструментов: ${ev.tools}"
+                    is AgyEvent.Text -> {
+                        val last = messages.lastOrNull()
+                        if (last?.role == "agent") {
+                            messages[messages.lastIndex] = last.copy(text = last.text + ev.delta)
+                        } else {
+                            messages.add(Message("agent", ev.delta))
+                        }
+                    }
+                    is AgyEvent.Step -> {
+                        messages.add(Message("tool", ev.type, "(${ev.state}) ${ev.detail}"))
+                    }
+                    is AgyEvent.Comment -> messages.add(Message("info", ev.text))
+                    is AgyEvent.Failed -> {
+                        messages.add(Message("error", ev.message))
+                        busy = false
+                    }
+                    is AgyEvent.TurnDone -> {
+                        busy = false
+                        session = session.copy(conversationId = ev.conversationId)
+                        status = buildString {
+                            append(ev.status)
+                            append(" · ${ev.tokens} tok")
+                            if (ev.seconds > 0) append(" · ${"%.1f".format(ev.seconds)} с")
+                        }
+                        if (ev.status != "SUCCESS") {
+                            messages.add(Message("error", "status: ${ev.status}"))
+                        }
+                        persist()
+                    }
+                }
+            }
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                modifier = Modifier.statusBarsPadding(),
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Назад")
+                    }
+                },
+                title = {
+                    Column {
+                        Text(session.title, style = MaterialTheme.typography.titleSmall, maxLines = 1)
+                        status?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "Настройки")
+                    }
+                },
+            )
+        },
+    ) { pad ->
+        Column(
+            modifier = Modifier.padding(pad).fillMaxSize().imePadding(),
+        ) {
+            if (!installed) {
+                Surface(
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Row(
+                        Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("agy не установлен", modifier = Modifier.weight(1f))
+                        TextButton(onClick = {
+                            scope.launch {
+                                runCatching {
+                                    withContext(Dispatchers.IO) { AgyBinary.install(ctx, net) { status = it } }
+                                }.onSuccess { onInstalled(true) }
+                                    .onFailure { status = "Ошибка: ${it.message}" }
+                            }
+                        }) { Text("Установить") }
+                    }
+                }
+            }
+
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(items) { item -> Bubble(item) }
+                items(messages) { m -> MessageBubble(m) }
             }
 
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AgentMode.entries.forEach { m ->
-                    FilterChip(
-                        selected = mode == m,
-                        onClick = { mode = m },
-                        label = { Text(m.label, style = MaterialTheme.typography.labelSmall) },
-                        modifier = Modifier.padding(end = 6.dp),
-                    )
-                }
+                ModeChips(mode = mode, enabled = !busy, onChange = { mode = it })
                 Spacer(Modifier.weight(1f))
                 if (busy) {
                     CircularProgressIndicator(
-                        modifier = Modifier.width(14.dp),
+                        modifier = Modifier.size(16.dp),
                         strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary,
                     )
                     Spacer(Modifier.width(6.dp))
                     TextButton(onClick = { runner.cancel() }) { Text("Стоп") }
@@ -259,129 +646,4 @@ fun AgyApp() {
             }
         }
     }
-
-    if (showSettings) {
-        SettingsSheet(
-            initial = net,
-            onDismiss = { showSettings = false },
-            onSave = {
-                net = it
-                NetConfig.save(ctx, it)
-                showSettings = false
-            },
-        )
-    }
-}
-
-@Composable
-private fun Bubble(item: ChatItem) {
-    val (bg, fg) = when (item.kind) {
-        Kind.USER -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) to MaterialTheme.colorScheme.onSurface
-        Kind.AGENT -> MaterialTheme.colorScheme.surface to MaterialTheme.colorScheme.onSurface
-        Kind.TOOL -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f) to MaterialTheme.colorScheme.onSurface
-        Kind.ERROR -> MaterialTheme.colorScheme.error.copy(alpha = 0.16f) to MaterialTheme.colorScheme.error
-        Kind.INFO -> MaterialTheme.colorScheme.surface.copy(alpha = 0.5f) to MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    Surface(color = bg, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp)) {
-            if (item.kind == Kind.TOOL || item.kind == Kind.INFO) {
-                Text("⚙ ${item.text}", style = MaterialTheme.typography.labelMedium)
-                if (item.extra.isNotBlank()) {
-                    Text(
-                        item.extra,
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            } else {
-                Text(item.text, color = fg, style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SettingsSheet(
-    initial: NetConfig,
-    onDismiss: () -> Unit,
-    onSave: (NetConfig) -> Unit,
-) {
-    var cfg by remember { mutableStateOf(initial) }
-    var diag by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-    val kinds = listOf(ProxyKind.DIRECT, ProxyKind.HTTP, ProxyKind.SOCKS5)
-
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Сеть") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    kinds.forEachIndexed { i, k ->
-                        SegmentedButton(
-                            selected = cfg.kind == k,
-                            onClick = { cfg = cfg.copy(kind = k) },
-                            shape = SegmentedButtonDefaults.itemShape(i, kinds.size),
-                        ) { Text(k.name) }
-                    }
-                }
-                if (cfg.kind != ProxyKind.DIRECT) {
-                    OutlinedTextField(
-                        value = cfg.host,
-                        onValueChange = { cfg = cfg.copy(host = it.trim()) },
-                        label = { Text("Хост") },
-                        singleLine = true,
-                    )
-                    OutlinedTextField(
-                        value = if (cfg.port == 0) "" else cfg.port.toString(),
-                        onValueChange = { cfg = cfg.copy(port = it.filter(Char::isDigit).toIntOrNull() ?: 0) },
-                        label = { Text("Порт") },
-                        singleLine = true,
-                    )
-                    OutlinedTextField(
-                        value = cfg.user,
-                        onValueChange = { cfg = cfg.copy(user = it) },
-                        label = { Text("Логин (необязательно)") },
-                        singleLine = true,
-                    )
-                    OutlinedTextField(
-                        value = cfg.pass,
-                        onValueChange = { cfg = cfg.copy(pass = it) },
-                        label = { Text("Пароль") },
-                        singleLine = true,
-                    )
-                }
-                OutlinedTextField(
-                    value = cfg.dns.joinToString(", "),
-                    onValueChange = {
-                        cfg = cfg.copy(dns = it.split(',', ' ').map(String::trim).filter(String::isNotEmpty))
-                    },
-                    label = { Text("DNS-серверы (необязательно)") },
-                    supportingText = {
-                        Text(
-                            "Обычный резолвер. Блокировки не обходит.",
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                    },
-                    singleLine = true,
-                )
-                TextButton(onClick = {
-                    diag = "Проверяю…"
-                    scope.launch {
-                        diag = withContext(Dispatchers.IO) { NetDiag.run(cfg) }
-                    }
-                }) { Text("Диагностика сети") }
-                diag?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = { onSave(cfg) }) { Text("Сохранить") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
-    )
 }

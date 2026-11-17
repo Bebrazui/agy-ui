@@ -9,10 +9,16 @@ Android-обёртка над официальным Google Antigravity CLI (`ag
 
 - `AgyBinary` — скачивает официальный `android_arm64` бинарь по манифесту
   Google, проверяет sha512, кладёт в `files/bin/agy`. В APK бинарь не входит.
+- `AgyLogin` — вход силами приложения: запускает `agy` с пустым `HOME`,
+  ловит ссылку авторизации Google, отдаёт её в браузер.
 - `AgyRunner` — headless-режим `agy -p … --output-format stream-json`,
   поток событий → UI.
-- `NetConfig` — прокси (HTTP/SOCKS5h) через переменные окружения.
-- `MainActivity` — Compose-чат: стрим ответа, карточки инструментов, настройки.
+- `Store` — сессии и сообщения в песочнице приложения (`sessions.json`).
+- `NetConfig` / `Http` / `DohDns` — прокси (HTTP/SOCKS5) и DoH-резолвер
+  для самого приложения.
+- `NetDiag` — диагностика: имя, TLS или IP.
+- UI — Material 3: список чатов, чат со стримом и карточками инструментов,
+  режимы Plan / Auto / Правки, настройки сети доступны до входа.
 
 ## Сборка
 
