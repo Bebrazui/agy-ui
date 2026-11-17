@@ -321,7 +321,7 @@ private fun LoginScreen(
                 OutlinedTextField(
                     value = code,
                     onValueChange = { code = it },
-                    label = { Text("Код из браузера") },
+                    label = { Text("Код или ссылка из браузера") },
                     singleLine = false,
                     maxLines = 3,
                     modifier = Modifier.fillMaxWidth(),

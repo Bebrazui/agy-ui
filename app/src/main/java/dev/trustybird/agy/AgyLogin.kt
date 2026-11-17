@@ -13,12 +13,14 @@ import java.util.concurrent.TimeUnit
 /**
  * Вход в аккаунт силами приложения.
  *
- * Проверено на 1.5.10: без сохранённой сессии agy печатает ссылку Google,
- * где redirect_uri = https://antigravity.google/oauth-callback, и затем ждёт
- * код авторизации в stdin.
+ * Проверено на 1.5.10: `agy acp --login` работает без терминала —
+ * печатает ссылку Google, затем читает из stdin код авторизации
+ * (или полный URL страницы, на которую пришёл браузер).
  *
- * Всё, что происходит, пишется в files/login.log — если что-то упадёт,
- * причина будет видна в «Настройки → Логи».
+ * redirect_uri = https://antigravity.google/oauth-callback — это веб-страница,
+ * поэтому браузер не вернётся в приложение сам: код копируется вручную.
+ *
+ * Всё пишется в files/login.log — видно в «Настройки → Логи».
  */
 class AgyLogin(
     private val ctx: Context,
@@ -38,21 +40,24 @@ class AgyLogin(
     private var process: Process? = null
     private var writer: BufferedWriter? = null
 
+    @Volatile
+    private var success = false
+
     private fun log(line: String) {
         runCatching { logFile.appendText(line.take(2000) + "\n") }
     }
 
-    /** Скопированный из браузера код → в stdin agy. */
-    fun submit(code: String): Boolean {
+    /** Код из браузера (или полный URL страницы) → в stdin agy. */
+    fun submit(text: String): Boolean {
         val w = writer ?: return false
         return runCatching {
-            w.write(code.trim())
+            w.write(text.trim())
             w.newLine()
             w.flush()
-            log(">>> код отправлен (${code.length} симв.)")
+            log(">>> отправлено (${text.length} симв.)")
             true
         }.getOrElse {
-            log("!!! не удалось отправить код: ${it.javaClass.simpleName}: ${it.message}")
+            log("!!! не удалось отправить: ${it.javaClass.simpleName}: ${it.message}")
             false
         }
     }
@@ -70,26 +75,23 @@ class AgyLogin(
 
     fun run(): Flow<Event> = flow {
         runCatching { logFile.writeText("") }
-        log("=== старт входа ${java.util.Date()} ===")
+        log("=== вход ${java.util.Date()} ===")
 
         val bin = AgyBinary.binary(ctx)
-        log("бинарь: ${bin.absolutePath}, есть=${bin.isFile}, exec=${bin.canExecute()}")
-
         if (!bin.isFile) {
             emit(Event.Done(false, "agy не установлен"))
             return@flow
         }
-        runCatching {
-            android.system.Os.chmod(bin.absolutePath, 493) // 0755
-        }.onFailure { log("chmod: ${it.message}") }
+        runCatching { android.system.Os.chmod(bin.absolutePath, 493) }
 
         val home = File(ctx.filesDir, "home").apply { mkdirs() }
-        val pb = ProcessBuilder(
-            bin.absolutePath,
-            "-p", "ping",
-            "--output-format", "stream-json",
-            "--mode", "plan",
-        ).apply {
+        val useKey = apiKey.isNotBlank()
+        val args = if (useKey) {
+            listOf("-p", "ping", "--output-format", "stream-json", "--mode", "plan")
+        } else {
+            listOf("acp", "--login")
+        }
+        val pb = ProcessBuilder(listOf(bin.absolutePath) + args).apply {
             directory(home)
             redirectErrorStream(true)
             environment().apply {
@@ -100,23 +102,31 @@ class AgyLogin(
                 put("NO_COLOR", "1")
                 if (apiKey.isNotBlank()) put("GEMINI_API_KEY", apiKey)
             }
-            log("команда: ${command().joinToString(" ")}")
-            log("прокси: ${net.proxyUrl()?.replace(Regex("//.*@"), "//***@") ?: "нет"}")
         }
+        log("команда: ${pb.command().joinToString(" ")}")
 
         val proc = try {
             pb.start()
         } catch (e: Exception) {
-            log("!!! процесс не стартовал: ${e.javaClass.name}: ${e.message}")
+            log("!!! не стартовал: ${e.javaClass.name}: ${e.message}")
             emit(Event.Done(false, "Не удалось запустить agy: ${e.message}"))
             return@flow
         }
-
         process = proc
         writer = BufferedWriter(OutputStreamWriter(proc.outputStream))
         log("процесс запущен")
 
-        var sawInit = false
+        // Страховка: если agy зависнет на ожидании, не держим вечно.
+        val watchdog = Thread {
+            try {
+                if (!proc.waitFor(5, TimeUnit.MINUTES)) {
+                    log("!!! таймаут ожидания входа — убиваю процесс")
+                    proc.destroyForcibly()
+                }
+            } catch (_: Exception) {
+            }
+        }.apply { isDaemon = true; start() }
+
         var printedUrl = false
         var lastStatus = ""
 
@@ -129,10 +139,9 @@ class AgyLogin(
 
                     if (line.startsWith("ERROR: logging before google.Init")) continue
 
-                    if ("\"event\":\"init\"" in line) {
-                        sawInit = true
-                        emit(Event.Status("Вход выполнен"))
-                        break
+                    if ("\"event\":\"init\"" in line || "\"status\":\"SUCCESS\"" in line) {
+                        success = true
+                        continue
                     }
 
                     val url = urlRegex.find(line)?.value?.trimEnd('.', ',', ')')
@@ -142,14 +151,19 @@ class AgyLogin(
                         continue
                     }
 
-                    if ("Waiting for authentication" in line) {
-                        emit(Event.Status("Жду код из браузера"))
-                        continue
-                    }
-
-                    if ("paste the authorization code" in line) {
-                        emit(Event.Status("Вставь код из браузера"))
-                        continue
+                    val lower = line.lowercase()
+                    when {
+                        "paste the authorization code" in lower -> {
+                            emit(Event.Status("Вставь код или адрес страницы"))
+                            continue
+                        }
+                        "login cancelled" in lower -> {
+                            emit(Event.Status("Вход отменён"))
+                            continue
+                        }
+                        "logged in" in lower || "signed in" in lower || "authenticated" in lower -> {
+                            success = true
+                        }
                     }
 
                     if (line.startsWith("{")) continue
@@ -168,14 +182,12 @@ class AgyLogin(
         val code = proc.waitFor()
         writer = null
         process = null
-        log("=== процесс завершён, код $code, init=$sawInit ===")
+        log("=== код выхода $code, успех=$success, ссылка была=$printedUrl ===")
 
-        if (sawInit) {
+        if (success || code == 0) {
             emit(Event.Done(true, "Готово"))
-        } else if (code == 0) {
-            emit(Event.Done(false, "Процесс вышел без подтверждения входа"))
         } else {
-            emit(Event.Done(false, "agy завершился с кодом $code (смотри Логи)"))
+            emit(Event.Done(false, "Вход не завершён (код $code). Смотри Логи."))
         }
     }.flowOn(Dispatchers.IO)
 }
