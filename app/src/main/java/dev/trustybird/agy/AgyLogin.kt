@@ -114,7 +114,7 @@ class AgyLogin(
 
         process = proc
         writer = BufferedWriter(OutputStreamWriter(proc.outputStream))
-        log("процесс запущен, pid=${runCatching { proc.pid() }.getOrDefault(-1)}")
+        log("процесс запущен")
 
         var sawInit = false
         var printedUrl = false
