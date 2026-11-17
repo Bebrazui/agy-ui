@@ -48,16 +48,13 @@ class FallbackDns(
                     // fallbackToSystem = false: иначе первый же сбой DoH вернул бы
                     // системный ответ и очередь серверов потеряла бы смысл.
                     raw.startsWith("https://") ->
-                        listOf(raw to DohDns(raw, httpClient, fallbackToSystem = false))
+                        listOf(raw to DohDns(listOf(raw), httpClient, fallbackToSystem = false))
 
-                    raw.startsWith("tls://") -> {
-                        val host = raw.removePrefix("tls://")
-                        listOf(raw to DotDns(host.substringBefore(':')))
-                    }
-
-                    raw.startsWith("tcp://") -> {
-                        val host = raw.removePrefix("tcp://")
-                        listOf(raw to DotDns(host.substringBefore(':')))
+                    raw.startsWith("tls://") || raw.startsWith("tcp://") -> {
+                        val address = raw.substringAfter("://")
+                        val host = address.substringBefore(':')
+                        val port = address.substringAfter(':', "853").toIntOrNull() ?: 853
+                        listOf(raw to DotDns(host, port))
                     }
 
                     else -> {
@@ -66,7 +63,7 @@ class FallbackDns(
                         listOf(
                             "$raw (DoT)" to DotDns(host, port),
                             "https://$host/dns-query (DoH)" to
-                                DohDns("https://$host/dns-query", httpClient, fallbackToSystem = false),
+                                DohDns(listOf("https://$host/dns-query"), httpClient, fallbackToSystem = false),
                         )
                     }
                 }
