@@ -175,6 +175,17 @@ fun SettingsDialog(
                             }
                         },
                     ) { Text("Проверить") }
+                    TextButton(
+                        enabled = !checking,
+                        onClick = {
+                            checking = true
+                            diag = "Запускаю agy через прокси…"
+                            scope.launch {
+                                diag = withContext(Dispatchers.IO) { ProxyCheck.run(ctx, cfg) }
+                                checking = false
+                            }
+                        },
+                    ) { Text("agy через прокси") }
                     TextButton(onClick = {
                         diag = "Читаю логи…"
                         scope.launch {
